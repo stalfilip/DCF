@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 import time
 from borsdata import constants as constants
+import configparser
 
 # pandas options for string representation of data frames (print)
 pd.set_option("display.max_columns", None)
@@ -9,12 +10,17 @@ pd.set_option("display.max_rows", None)
 
 
 class BorsdataAPI:
-    def __init__(self, _api_key):
-        self._api_key = _api_key
+    def __init__(self, config_path = r"C:\Dev\config\borsdata.cfg"):
+        self._api_key = self.fetch_configdata("Credentials", "apikey", config_path)
         self._url_root = "https://apiservice.borsdata.se/v1/"
         self._last_api_call = 0
         self._api_calls_per_second = 10
         self._params = {'authKey': self._api_key, 'maxYearCount': 20, 'maxR12QCount': 40, 'maxCount': 20}
+
+    def fetch_configdata(self,section,key,path):
+        config = configparser.ConfigParser()
+        config.read(path)
+        return config.get(section,key)
 
     def _call_api(self, url, **kwargs):
         """
