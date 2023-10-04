@@ -4,7 +4,7 @@ import pandas as pd
 
 class DCF:
 
-    def __init__(self, path_to_company_data, nr_forecast_years, risk_free_rate, market_return, cost_of_debt, tax_rate, perpetual_growth_rate, stock_yf_code, market_yf_code, beta = None):
+    def __init__(self, outstanding_shares, path_to_company_data, nr_forecast_years, market_return, cost_of_debt, tax_rate, perpetual_growth_rate, stock_yf_code, market_yf_code, beta = None):
 
         self.df = pd.read_excel(path_to_company_data, sheet_name='Year', engine='openpyxl')
 
@@ -14,13 +14,13 @@ class DCF:
         self.debt_weight, self.equity_weight = self.calculate_weights(self.df)
         self.stock_yf_code = stock_yf_code  # Flyttad före beta-beräkningen
         self.market_yf_code = market_yf_code  # Flyttad före beta-beräkningen
+        self.cost_of_debt = cost_of_debt
+        self.outstanding_shares = outstanding_shares
         if beta is None:
-            self.beta = self.calculate_beta(risk_free_rate)
+            self.beta = self.calculate_beta(cost_of_debt)
         else:
             self.beta = beta
-        self.risk_free_rate = risk_free_rate
         self.market_return = market_return
-        self.cost_of_debt = cost_of_debt
         self.tax_rate = tax_rate
         self.perpetual_growth_rate = perpetual_growth_rate
         self.cost_of_equity = self.calculate_cost_of_equity()
@@ -88,14 +88,15 @@ class DCF:
         """
         Beräknar kostnaden för eget kapital med hjälp av CAPM.
         """
-        return self.risk_free_rate + self.beta * (self.market_return - self.risk_free_rate)
+
+        return self.cost_of_debt + self.beta * (self.market_return - self.cost_of_debt)
 
     def calculate_wacc(self):
         """
         Beräknar Weighted Average Cost of Capital (WACC).
         """
         wacc = (self.equity_weight * self.cost_of_equity) + (self.debt_weight * self.cost_of_debt * (1 - self.tax_rate))
-        #print(f"WACC: {wacc}")
+       
         return wacc
 
     def calculate_present_value(self):
@@ -128,10 +129,9 @@ class DCF:
         pv_of_terminal_value = terminal_value / (1 + self.discount_rate)**len(self.cash_flows)
         total_value = pv_of_cash_flows + pv_of_terminal_value
         #print(f"Terminal Value / Total Value: {pv_of_terminal_value / total_value}")
-        outstanding_shares = 1134
-        #outstanding_shares = self.get_outstanding_shares()
-        valuation = total_value / outstanding_shares
-        #print(f"DCF-valuation: {valuation}")
+       
+        valuation = total_value / self.outstanding_shares
+
         return valuation
 
 
