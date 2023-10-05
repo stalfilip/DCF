@@ -4,13 +4,13 @@ import pandas as pd
 
 class DCF:
 
-    def __init__(self, outstanding_shares, path_to_company_data, nr_forecast_years, market_return, cost_of_debt, tax_rate, perpetual_growth_rate, stock_yf_code, market_yf_code, beta = None):
+    def __init__(self, uncer_in_fcf, outstanding_shares, path_to_company_data, nr_forecast_years, market_return, cost_of_debt, tax_rate, perpetual_growth_rate, stock_yf_code, market_yf_code, beta = None):
 
         self.df = pd.read_excel(path_to_company_data, sheet_name='Year', engine='openpyxl')
-
+        self.uncertainty_in_fcf = uncer_in_fcf
         self.avg_fcf_growth = self.avg_fcf_growth(self.df)
         self.latest_fcf = self.get_latest_fcf(self.df)
-        self.cash_flows = self.forecast_fcf(self.latest_fcf, nr_forecast_years, self.avg_fcf_growth)
+        self.lower_cash_flow, self.cash_flows,  self.upper_cash_flow = self.forecast_fcf(self.latest_fcf, nr_forecast_years, self.avg_fcf_growth)
         self.debt_weight, self.equity_weight = self.calculate_weights(self.df)
         self.stock_yf_code = stock_yf_code  # Flyttad före beta-beräkningen
         self.market_yf_code = market_yf_code  # Flyttad före beta-beräkningen
@@ -48,16 +48,24 @@ class DCF:
         return min(avg_fcf_growth, maximum_growth)
     
     def forecast_fcf(self, latest_fcf, nr_forecast_years, avg_fcf_growth):
-        future_cash_flows = [latest_fcf]  # Inkluderar dagens kassaflöde.
+        lower_future_cash_flows = [latest_fcf]
+        future_cash_flows = [latest_fcf]  
+        upper_future_cash_flows = [latest_fcf]
         #print(f"avg_fcf_growth: {avg_fcf_growth}")
+        lower_growth = avg_fcf_growth * (1 - self.uncertainty_in_fcf)
+        upper_growth = avg_fcf_growth * (1 + self.uncertainty_in_fcf)
+
         for _ in range(nr_forecast_years):
             next_fcf = future_cash_flows[-1] * (1 + avg_fcf_growth/100)
+            lower_next_fcf = lower_future_cash_flows[-1] * (1 + lower_growth/100)
+            upper_next_fcf = upper_future_cash_flows[-1] * (1 + upper_growth/100)
             future_cash_flows.append(next_fcf)
-        #print(future_cash_flows)
-        return future_cash_flows
+            lower_future_cash_flows.append(lower_next_fcf)
+            upper_future_cash_flows.append(upper_next_fcf)
+
+        return lower_future_cash_flows, future_cash_flows,  upper_future_cash_flows
 
     def calculate_weights(self, df):
-    
         latest_year = df.columns[-1]
         total_equity_row = df[df["Report"] == "Total Equity"]
         total_equity = total_equity_row[latest_year].iloc[0]
@@ -81,7 +89,6 @@ class DCF:
         adjusted_stock_returns = [ret - risk_free_rate for ret in stock_returns]
         adjusted_market_returns = [ret - risk_free_rate for ret in market_returns]
         beta = np.cov(adjusted_stock_returns, adjusted_market_returns)[0][1] / np.var(adjusted_market_returns)
-        #print(f"Beta: {beta}")
         return beta        
                
     def calculate_cost_of_equity(self):
@@ -103,35 +110,46 @@ class DCF:
         """
         Beräknar nuvärdet av en serie kassaflöden givet en diskonteringsränta.
         """
-        present_value = self.cash_flows[0]  # Lägger till dagens kassaflöde direkt utan diskontering
+        present_value = self.cash_flows[0]
+        lower_present_value = self.lower_cash_flow[0]
+        upper_present_value = self.upper_cash_flow[0]
 
-        for i, cash_flow in enumerate(self.cash_flows[1:]):  # Börjar från nästa kassaflöde
+        for i, cash_flow in enumerate(self.cash_flows[1:]):  
             present_value += cash_flow / (1 + self.discount_rate)**(i+1)
 
-        #print(f"Present value: {present_value}")
-        return present_value
+        for i, cash_flow in enumerate(self.lower_cash_flow[1:]):  
+            lower_present_value += cash_flow / (1 + self.discount_rate)**(i+1)
+
+        for i, cash_flow in enumerate(self.upper_cash_flow[1:]):
+            upper_present_value += cash_flow / (1 + self.discount_rate)**(i+1)
+            
+        return lower_present_value, present_value, upper_present_value
 
     def calculate_terminal_value(self):
         """
         Beräknar det eviga värdet av kassaflöden med en konstant tillväxttakt.
 
         """
+        lower_terminal_value = self.lower_cash_flow[-1] * (1 + self.perpetual_growth_rate) / (self.discount_rate - self.perpetual_growth_rate)
         terminal_value = self.cash_flows[-1] * (1 + self.perpetual_growth_rate) / (self.discount_rate - self.perpetual_growth_rate)
+        upper_terminal_value = self.upper_cash_flow[-1] * (1 + self.perpetual_growth_rate) / (self.discount_rate - self.perpetual_growth_rate)
         #print(f"Terminal value: {terminal_value}")
-        return terminal_value
+        return lower_terminal_value, terminal_value, upper_terminal_value
 
     def perform_dcf(self):
         """
         Utför en DCF-analys.
         """
-        pv_of_cash_flows = self.calculate_present_value()
-        terminal_value = self.calculate_terminal_value()
-        pv_of_terminal_value = terminal_value / (1 + self.discount_rate)**len(self.cash_flows)
-        total_value = pv_of_cash_flows + pv_of_terminal_value
+        lower_pv_of_cash_flows, pv_of_cash_flows, upper_pv_of_cash_flows = self.calculate_present_value()
+        lower_terminal_value, terminal_value, upper_terminal_value = self.calculate_terminal_value()
+        lower_total_value = lower_pv_of_cash_flows + lower_terminal_value
+        total_value = pv_of_cash_flows + terminal_value
+        upper_total_value = upper_pv_of_cash_flows + upper_terminal_value
         #print(f"Terminal Value / Total Value: {pv_of_terminal_value / total_value}")
-       
+        lower_valuation = lower_total_value / self.outstanding_shares
         valuation = total_value / self.outstanding_shares
-
-        return valuation
+        upper_valuation = upper_total_value / self.outstanding_shares
+        
+        return lower_valuation, valuation, upper_valuation
 
 
